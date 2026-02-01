@@ -1,9 +1,10 @@
 import os
 import discord
 from discord.ext import commands, tasks
-from tracker import track_daily
-from database import get_today_lp
-from datetime import date
+from tracker import snapshot_player
+from zoneinfo import ZoneInfo
+from database import get_lp_for_date
+from datetime import date, time
 from dotenv import load_dotenv
 from riot_api import get_account, get_rank_info_by_puuid, get_tft_summoner_by_puuid
 
@@ -27,6 +28,7 @@ TRACKED_RIOT_IDS = [
     {"name": "ah b", "tag": "1008"},
     {"name": "98KChickenBurger", "tag": "98CN"},
     {"name": "Murrph", "tag": "NA1"},
+    {"name": "Murrph", "tag": "TTV"},
     {"name": "Shadowon12", "tag": "NA1"},
     {"name": "AaronTheN00b", "tag": "NA1"}, 
     {"name": "basicallyAlex", "tag": "NA1"},
@@ -61,12 +63,27 @@ def fetch_ids():
 
 fetch_ids()
 
+EST = ZoneInfo("America/New_York")
+
+@tasks.loop(time=time(hour=3, minute=0, tzinfo=EST))
+async def daily_snapshot():
+    print("📸 Taking daily TFT LP snapshot...")
+    for p in TRACKED:
+        try:
+            snapshot_player(p["puuid"])
+        except Exception as e:
+            print(f"Snapshot error for {p['name']}: {e}")
+
 @bot.event
 async def on_ready():
     print(f"{bot.user} is online!")
     print("Tracking summoners:", [p["name"] for p in TRACKED])
 
-@bot.command()
+    if not daily_snapshot.is_running():
+        daily_snapshot.start()
+
+
+'''@bot.command()
 async def daily(ctx):
     msg = "**📊 Daily TFT LP Gains**\n"
 
@@ -83,6 +100,39 @@ async def daily(ctx):
         msg += f"{p['name']}: {sign}{diff} LP\n"
 
     await ctx.send(msg)
+'''
+@bot.command()
+async def loser(ctx):
+    today = str(date.today())
+
+    biggest_loss = None
+    biggest_loser = None
+
+    for p in TRACKED:
+        start_lp = get_lp_for_date(p["puuid"], today)
+        if start_lp is None:
+            continue
+
+        rank_data = get_rank_info_by_puuid(p["puuid"])
+        tft = next((q for q in rank_data if q["queueType"] == "RANKED_TFT"), None)
+        if not tft:
+            continue
+
+        current_lp = tft["leaguePoints"]
+        diff = current_lp - start_lp
+
+        if biggest_loss is None or diff < biggest_loss:
+            biggest_loss = diff
+            biggest_loser = p["name"]
+
+    if biggest_loser is None:
+        await ctx.send("No snapshot data yet for today.")
+        return
+
+    await ctx.send(
+        f"💀 **Biggest LP Loser Today** 💀\n"
+        f"{biggest_loser}: {biggest_loss} LP since 3:00 AM"
+    )
 
 @bot.command()
 async def standings(ctx):
