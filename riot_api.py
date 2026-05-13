@@ -17,6 +17,14 @@ PLATFORM = "na1"
 EST = ZoneInfo("America/New_York")
 LAST_20_CACHE = {}
 CACHE_TTL = 15 * 60  # 15 minutes
+SESSION = None
+
+def get_session():
+    global SESSION
+    if SESSION is None or SESSION.closed:
+        SESSION = aiohttp.ClientSession()
+    return SESSION
+
 def get_account(riot_name, tag):
     url = f"https://{REGION}.api.riotgames.com/riot/account/v1/accounts/by-riot-id/{riot_name}/{tag}"
     response = requests.get(url, headers=HEADERS)
@@ -76,15 +84,15 @@ def get_tft_match(match_id):
 
 # Async fetch JSON
 async def fetch_json(url):
-    async with aiohttp.ClientSession() as session:
-        async with session.get(url, headers=HEADERS) as resp:
-            if resp.status == 429:
-                # Rate limited → wait and retry
-                retry_after = int(resp.headers.get("Retry-After", 1))
-                await asyncio.sleep(retry_after)
-                return await fetch_json(url)
-            resp.raise_for_status()
-            return await resp.json()
+    session = get_session()
+    async with session.get(url, headers=HEADERS) as resp:
+        if resp.status == 429:
+            # Rate limited → wait and retry
+            retry_after = int(resp.headers.get("Retry-After", 1))
+            await asyncio.sleep(retry_after)
+            return await fetch_json(url)
+        resp.raise_for_status()
+        return await resp.json()
 
 async def get_last_20_stats_async(puuid):
     url = f"https://americas.api.riotgames.com/tft/match/v1/matches/by-puuid/{puuid}/ids?count=20"
@@ -124,10 +132,12 @@ async def get_last_20_stats_async(puuid):
         if placement <= 4:
             top4 += 1
 
+        # Capture the timestamp of the most recent game
         if last_game_date is None:
             # Riot timestamps are in milliseconds
             last_game_date = datetime.fromtimestamp(match["info"]["game_datetime"] / 1000, tz=ZoneInfo("America/New_York"))
 
+        # Handle streak calculation
         if streak_active:
             this_type = "top4" if placement <= 4 else "bot4"
 
