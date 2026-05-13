@@ -68,7 +68,7 @@ def absolute_lp(tier, division, lp):
     division_index = division_order.get(division.upper(), 0) if division else 0
 
     return tier_index * 400 + (division_index - 1) * 100 + lp
-# Everything below does not work, will probably never work.
+
 async def open_tactics_tools_wrapped():
     async with async_playwright() as p:
         browser = await p.chromium.launch(
@@ -108,17 +108,21 @@ async def type_riot_id(page: Page, riot_id: str):
     Types a Riot ID like 'hung#002' into the tactics.tools input field.
     """
 
+    # Wait for the input to appear and be usable
     input_locator = page.locator(
         "input.MuiInputBase-input[type='text']"
     ).first
 
     await input_locator.wait_for(state="visible", timeout=10_000)
 
+    # Clear any existing text (important for re-runs)
     await input_locator.click()
     await input_locator.fill("")
 
+    # Type naturally (some sites block instant fill)
     await input_locator.type(riot_id, delay=50)
 
+    # Optional: blur to trigger React state updates
     await input_locator.press("Tab")
 
     await page.get_by_role("button", name="SEARCH").click()
