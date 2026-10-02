@@ -86,6 +86,9 @@ async def snapshot(players):
 # BACKGROUND TASKS
 # ------------------------
 
+async def log_loop_error(loop_name, error):
+    print(f"❌ Unhandled error in {loop_name} loop: {error}")
+
 @tasks.loop(minutes=15)
 async def refresh_rank_cache():
     global RANK_CACHE
@@ -176,6 +179,10 @@ async def refresh_rank_cache():
     except Exception as e:
         print(f"❌ Rank cache refresh failed: {e}")
 
+@refresh_rank_cache.error
+async def on_rank_cache_error(error):
+    await log_loop_error("refresh_rank_cache", error)
+
 @tasks.loop(minutes=1)
 async def refresh_match_stats():
     """
@@ -188,9 +195,12 @@ async def refresh_match_stats():
     if not TRACKED:
         return
 
-    p = TRACKED[CURRENT_STATS_INDEX]
+    # keep the cursor in range when unregisters shrink TRACKED
+    CURRENT_STATS_INDEX %= len(TRACKED)
 
     try:
+        p = TRACKED[CURRENT_STATS_INDEX]
+
         LAST_20_STATS[p["puuid"]] = (
             await get_last_20_stats_async(p["puuid"])
         )
@@ -203,6 +213,10 @@ async def refresh_match_stats():
     CURRENT_STATS_INDEX = (
         CURRENT_STATS_INDEX + 1
     ) % len(TRACKED)
+
+@refresh_match_stats.error
+async def on_match_stats_error(error):
+    await log_loop_error("refresh_match_stats", error)
 
 
 @tasks.loop(time=time(hour=3, minute=15, tzinfo=EST))
