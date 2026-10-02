@@ -4,8 +4,9 @@ import asyncio
 from discord.ext import commands, tasks
 from discord import app_commands
 from zoneinfo import ZoneInfo
-from datetime import time, datetime, timedelta
+from datetime import time, datetime
 from leaderboard import LeaderboardView
+from domain import parse_ranked_entry, snapshot_date
 from database import (
     save_snapshot,
     register_player,
@@ -63,59 +64,16 @@ def fetch_ids():
     ]
 
 
-def absolute_lp(tier, division, lp):
-    tier_order = [
-        "UNRANKED", "IRON", "BRONZE", "SILVER", "GOLD",
-        "PLATINUM", "EMERALD", "DIAMOND",
-        "MASTER", "GRANDMASTER", "CHALLENGER"
-    ]
-    division_order = {"I": 4, "II": 3, "III": 2, "IV": 1}
-
-    tier = tier.upper()
-
-    if tier in ["MASTER", "GRANDMASTER", "CHALLENGER"]:
-        return 3200 + lp
-
-    tier_index = tier_order.index(tier)
-    division_index = division_order.get(division.upper(), 0) if division else 0
-
-    return tier_index * 400 + (division_index - 1) * 100 + lp
-
-
-def get_snapshot_date():
-    now = datetime.now(EST)
-
-    snapshot_date = now.date()
-
-    if now.time() < time(3, 15):
-        snapshot_date -= timedelta(days=1)
-
-    return snapshot_date.isoformat()
-
-
 async def snapshot(players):
-    today = get_snapshot_date()
+    today = snapshot_date()
 
     for p in players:
         try:
             rank_data = get_tft_rank_by_puuid(p["puuid"])
+            entry = parse_ranked_entry(rank_data)
 
-            tft = next(
-                (q for q in rank_data if q["queueType"] == "RANKED_TFT"),
-                None
-            )
-
-            if not tft:
-                # optional: still store unranked as 0
-                lp = 0
-            else:
-                tier = tft["tier"].upper()
-                division = (
-                    None
-                    if tier in ["MASTER", "GRANDMASTER", "CHALLENGER"]
-                    else tft.get("rank", "").upper()
-                )
-                lp = absolute_lp(tier, division, tft["leaguePoints"])
+            # still store unranked players as 0
+            lp = entry.absolute_lp if entry else 0
 
             save_snapshot(p["puuid"], today, lp)
 
@@ -142,38 +100,20 @@ async def refresh_rank_cache():
 
         for p in TRACKED:
             rank_data = await get_tft_rank_by_puuid_async(p["puuid"])
+            entry = parse_ranked_entry(rank_data)
 
-            tft = next(
-                (
-                    q for q in rank_data
-                    if q["queueType"] == "RANKED_TFT"
-                ),
-                None
-            )
-
-            if not tft:
+            if not entry:
                 continue
-
-            tier = tft["tier"].upper()
-
-            division = (
-                None
-                if tier in ["MASTER", "GRANDMASTER", "CHALLENGER"]
-                else tft.get("rank", "").upper()
-            )
-
-            lp = tft["leaguePoints"]
-            abs_lp = absolute_lp(tier, division, lp)
 
             new_cache[p["puuid"]] = {
                 "puuid": p["puuid"],
                 "riot_name": p["name"],
                 "riot_tag": p["tag"],
 
-                "tier": tier,
-                "division": division,
-                "lp": lp,
-                "absolute_lp": abs_lp,
+                "tier": entry.tier,
+                "division": entry.division,
+                "lp": entry.lp,
+                "absolute_lp": entry.absolute_lp,
 
                 # Filled in after ladder fetch
                 "rank": None,
@@ -433,34 +373,17 @@ async def tft_register(
         # Immediately cache newly registered player
         try:
             rank_data = await get_tft_rank_by_puuid_async(puuid)
+            entry = parse_ranked_entry(rank_data)
 
-            tft = next(
-                (
-                    q for q in rank_data
-                    if q["queueType"] == "RANKED_TFT"
-                ),
-                None
-            )
-
-            if tft:
-                tier = tft["tier"].upper()
-
-                division = (
-                    None
-                    if tier in ["MASTER", "GRANDMASTER", "CHALLENGER"]
-                    else tft.get("rank", "").upper()
-                )
-
-                lp = tft["leaguePoints"]
-
+            if entry:
                 RANK_CACHE[puuid] = {
                     "puuid": puuid,
                     "riot_name": name,
                     "riot_tag": tag,
-                    "tier": tier,
-                    "division": division,
-                    "lp": lp,
-                    "absolute_lp": absolute_lp(tier, division, lp),
+                    "tier": entry.tier,
+                    "division": entry.division,
+                    "lp": entry.lp,
+                    "absolute_lp": entry.absolute_lp,
                     "rank": None,
                     "updated_at": datetime.now(EST)
                 }
