@@ -72,10 +72,8 @@ async def snapshot(players):
             rank_data = get_tft_rank_by_puuid(p["puuid"])
             entry = parse_ranked_entry(rank_data)
 
-            # still store unranked players as 0
-            lp = entry.absolute_lp if entry else 0
-
-            save_snapshot(p["puuid"], today, lp)
+            if entry:
+                save_snapshot(p["puuid"], today, entry.absolute_lp)
 
         except Exception as e:
             print(f"Snapshot error for {p['name']}: {e}")
@@ -99,30 +97,37 @@ async def refresh_rank_cache():
         # --------------------------------
         # 1. Fetch individual player ranks
         # --------------------------------
+        started = list(TRACKED)
         new_cache = {}
+        skipped = 0
 
-        for p in TRACKED:
-            rank_data = await get_tft_rank_by_puuid_async(p["puuid"])
-            entry = parse_ranked_entry(rank_data)
+        for p in started:
+            try:
+                rank_data = await get_tft_rank_by_puuid_async(p["puuid"])
+                entry = parse_ranked_entry(rank_data)
 
-            if not entry:
-                continue
+                if not entry:
+                    continue
 
-            new_cache[p["puuid"]] = {
-                "puuid": p["puuid"],
-                "riot_name": p["name"],
-                "riot_tag": p["tag"],
+                new_cache[p["puuid"]] = {
+                    "puuid": p["puuid"],
+                    "riot_name": p["name"],
+                    "riot_tag": p["tag"],
 
-                "tier": entry.tier,
-                "division": entry.division,
-                "lp": entry.lp,
-                "absolute_lp": entry.absolute_lp,
+                    "tier": entry.tier,
+                    "division": entry.division,
+                    "lp": entry.lp,
+                    "absolute_lp": entry.absolute_lp,
 
-                # Filled in after ladder fetch
-                "rank": None,
+                    # Filled in after ladder fetch
+                    "rank": None,
 
-                "updated_at": datetime.now(EST)
-            }
+                    "updated_at": datetime.now(EST)
+                }
+
+            except Exception as e:
+                print(f"Rank cache error for {p['name']}: {e}")
+                skipped += 1
 
             await asyncio.sleep(1.5)
 
@@ -164,16 +169,28 @@ async def refresh_rank_cache():
                 )
 
         # --------------------------------
-        # 4. Atomically replace cache
+        # 4. Reconcile and publish cache
         # --------------------------------
-        RANK_CACHE = new_cache
+        current = {p["puuid"] for p in TRACKED}
+        started_puuids = {p["puuid"] for p in started}
+
+        # Drop players who unregistered mid-refresh; carry over concurrent
+        # registrations (in RANK_CACHE but not in the list we iterated).
+        RANK_CACHE = {
+            **{puuid: entry for puuid, entry in new_cache.items()
+               if puuid in current},
+            **{puuid: RANK_CACHE[puuid]
+               for puuid in current - started_puuids
+               if puuid in RANK_CACHE}
+        }
 
         print(
             f"✅ Rank cache updated: "
-            f"{len(new_cache)} tracked players, "
+            f"{len(RANK_CACHE)} tracked players, "
             f"{challenger_count} Challenger, "
             f"{grandmaster_count} Grandmaster, "
             f"{len(master_entries)} Master"
+            f"{f', {skipped} skipped' if skipped else ''}"
         )
 
     except Exception as e:
