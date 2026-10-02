@@ -1,6 +1,7 @@
 import os
 import discord
 import asyncio
+from dotenv import load_dotenv
 from discord.ext import commands, tasks
 from discord import app_commands
 from zoneinfo import ZoneInfo
@@ -8,6 +9,7 @@ from datetime import time, datetime
 from leaderboard import LeaderboardView
 from domain import parse_ranked_entry, snapshot_date
 from database import (
+    init_db,
     save_snapshot,
     register_player,
     get_registered_players,
@@ -15,6 +17,7 @@ from database import (
 )
 
 from riot_api import (
+    RIOT_API_KEY,
     get_account_async,
     get_tft_summoner_by_puuid_async,
     get_tft_rank_by_puuid_async,
@@ -25,11 +28,22 @@ from riot_api import (
 # BOT SETUP
 # ------------------------
 
+load_dotenv()
+
 DISCORD_TOKEN = os.getenv("DISCORD_TOKEN")
 
 intents = discord.Intents.default()
 
-bot = commands.Bot(command_prefix="!", intents=intents)
+class TFTBot(commands.Bot):
+    async def setup_hook(self):
+        init_db()
+        fetch_ids()
+        await tree.sync()
+
+        print("Commands synced")
+
+
+bot = TFTBot(command_prefix="!", intents=intents)
 tree = bot.tree
 
 EST = ZoneInfo("America/New_York")
@@ -253,8 +267,6 @@ async def daily_snapshot():
 async def on_ready():
     print(f"{bot.user} online")
 
-    fetch_ids()
-    
     if not refresh_rank_cache.is_running():
         refresh_rank_cache.start()
 
@@ -263,10 +275,6 @@ async def on_ready():
 
     if not daily_snapshot.is_running():
         daily_snapshot.start()
-
-    await tree.sync()
-
-    print("Commands synced")
 
 
 # ------------------------
@@ -484,4 +492,15 @@ tree.add_command(tft_group)
 # RUN
 # ------------------------
 
-bot.run(DISCORD_TOKEN)
+def main():
+    if not DISCORD_TOKEN:
+        raise SystemExit("DISCORD_TOKEN is not set (checked environment and .env)")
+
+    if not RIOT_API_KEY:
+        raise SystemExit("RIOT_API_KEY is not set (checked environment and .env)")
+
+    bot.run(DISCORD_TOKEN)
+
+
+if __name__ == "__main__":
+    main()
