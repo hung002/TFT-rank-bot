@@ -1,30 +1,42 @@
+import os
 import sqlite3
-conn = sqlite3.connect("tft.db")
-c = conn.cursor()
-c.execute("""
-CREATE TABLE IF NOT EXISTS lp_snapshots (
-    puuid TEXT NOT NULL,
-    date TEXT NOT NULL,
-    lp INTEGER NOT NULL,
-    PRIMARY KEY (puuid, date)
-)
-""")
 
-c.execute("""
-CREATE TABLE IF NOT EXISTS registered_players (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    discord_id TEXT,
-    riot_name TEXT NOT NULL,
-    riot_tag TEXT NOT NULL,
-    puuid TEXT NOT NULL UNIQUE
+# Anchored on the module's location so the working directory never matters.
+# Override with TFT_DB_PATH to point elsewhere.
+DB_PATH = os.environ.get(
+    "TFT_DB_PATH",
+    os.path.join(os.path.dirname(os.path.abspath(__file__)), "tft.db")
 )
-""")
 
-c.execute("CREATE INDEX IF NOT EXISTS idx_lp_date ON lp_snapshots(date)")
-conn.commit()
-conn.close()
+def init_db():
+    conn = sqlite3.connect(DB_PATH)
+    c = conn.cursor()
+
+    c.execute("""
+    CREATE TABLE IF NOT EXISTS lp_snapshots (
+        puuid TEXT NOT NULL,
+        date TEXT NOT NULL,
+        lp INTEGER NOT NULL,
+        PRIMARY KEY (puuid, date)
+    )
+    """)
+
+    c.execute("""
+    CREATE TABLE IF NOT EXISTS registered_players (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        discord_id TEXT,
+        riot_name TEXT NOT NULL,
+        riot_tag TEXT NOT NULL,
+        puuid TEXT NOT NULL UNIQUE
+    )
+    """)
+
+    c.execute("CREATE INDEX IF NOT EXISTS idx_lp_date ON lp_snapshots(date)")
+    conn.commit()
+    conn.close()
+
 def register_player(discord_id, riot_name, riot_tag, puuid):
-    conn = sqlite3.connect("tft.db")
+    conn = sqlite3.connect(DB_PATH)
     c = conn.cursor()
 
     c.execute("""
@@ -37,7 +49,7 @@ def register_player(discord_id, riot_name, riot_tag, puuid):
 
 
 def get_registered_players():
-    conn = sqlite3.connect("tft.db")
+    conn = sqlite3.connect(DB_PATH)
     c = conn.cursor()
 
     c.execute("""
@@ -60,7 +72,7 @@ def get_registered_players():
     ]
 
 def unregister_player(discord_id, riot_name, riot_tag):
-    conn = sqlite3.connect("tft.db")
+    conn = sqlite3.connect(DB_PATH)
     c = conn.cursor()
 
     c.execute("""
@@ -77,7 +89,7 @@ def unregister_player(discord_id, riot_name, riot_tag):
 
 ## Snapshots
 def save_snapshot(puuid, date, lp):
-    conn = sqlite3.connect("tft.db")
+    conn = sqlite3.connect(DB_PATH)
     c = conn.cursor()
 
     c.execute("""
@@ -91,7 +103,7 @@ def save_snapshot(puuid, date, lp):
     conn.close()
 
 def get_lp_for_date(puuid, date):
-    conn = sqlite3.connect("tft.db")
+    conn = sqlite3.connect(DB_PATH)
     c = conn.cursor()
 
     c.execute(
