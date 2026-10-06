@@ -76,10 +76,6 @@ def unregister_player(discord_id, riot_name, riot_tag):
     return deleted > 0
 
 ## Snapshots
-def get_start_of_day_snapshot(puuid):
-    today = get_snapshot_date()
-    return get_lp_for_date(puuid, today)
-
 def save_snapshot(puuid, date, lp):
     conn = sqlite3.connect("tft.db")
     c = conn.cursor()

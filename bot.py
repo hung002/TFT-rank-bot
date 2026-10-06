@@ -4,10 +4,9 @@ import asyncio
 from discord.ext import commands, tasks
 from discord import app_commands
 from zoneinfo import ZoneInfo
-from datetime import date, time, datetime, timedelta
+from datetime import time, datetime, timedelta
 from leaderboard import LeaderboardView
 from database import (
-    get_lp_for_date,
     save_snapshot,
     register_player,
     get_registered_players,
@@ -129,63 +128,6 @@ async def snapshot(players):
 # ------------------------
 # BACKGROUND TASKS
 # ------------------------
-'''
-@tasks.loop(minutes=15)
-async def refresh_rank_cache():
-    """
-    Cheap refresh:
-    1 API call per player
-    """
-
-    print("🔄 Refreshing rank cache...")
-
-    for p in TRACKED:
-        try:
-            rank_data = await get_tft_rank_by_puuid_async(p["puuid"])
-
-            tft = next(
-                (
-                    q for q in rank_data
-                    if q["queueType"] == "RANKED_TFT"
-                ),
-                None
-            )
-
-            if not tft:
-                continue
-
-            tier = tft["tier"].upper()
-
-            division = (
-                None
-                if tier in ["MASTER", "GRANDMASTER", "CHALLENGER"]
-                else tft.get("rank", "").upper()
-            )
-
-            lp = tft["leaguePoints"]
-
-            abs_lp = absolute_lp(tier, division, lp)
-
-            RANK_CACHE[p["puuid"]] = {
-                "puuid": p["puuid"],
-                "riot_name": p["name"],
-                "riot_tag": p["tag"],
-
-                "tier": tier,
-                "division": division,
-                "lp": lp,
-                "absolute_lp": abs_lp,
-
-                "updated_at": datetime.now(EST)
-            }
-
-            print(f"Updated rank cache for {p['name']}")
-
-            await asyncio.sleep(1.5)
-
-        except Exception as e:
-            print(f"Rank cache error {p['name']}: {e}")
-'''
 
 @tasks.loop(minutes=15)
 async def refresh_rank_cache():
@@ -236,7 +178,6 @@ async def refresh_rank_cache():
 
                 # Filled in after ladder fetch
                 "rank": None,
-                "tier_rank": None,
 
                 "updated_at": datetime.now(EST)
             }
@@ -263,14 +204,12 @@ async def refresh_rank_cache():
 
             if puuid in new_cache:
                 new_cache[puuid]["rank"] = i
-                new_cache[puuid]["tier_rank"] = i
 
         for i, player in enumerate(grandmaster_entries, start=1):
             puuid = player["puuid"]
 
             if puuid in new_cache:
                 new_cache[puuid]["rank"] = challenger_count + i
-                new_cache[puuid]["tier_rank"] = i
 
         for i, player in enumerate(master_entries, start=1):
             puuid = player["puuid"]
@@ -281,7 +220,6 @@ async def refresh_rank_cache():
                     + grandmaster_count
                     + i
                 )
-                new_cache[puuid]["tier_rank"] = i
 
         # --------------------------------
         # 4. Atomically replace cache
@@ -525,7 +463,6 @@ async def tft_register(
                     "lp": lp,
                     "absolute_lp": absolute_lp(tier, division, lp),
                     "rank": None,
-                    "tier_rank": None,
                     "updated_at": datetime.now(EST)
                 }
             LAST_20_STATS[puuid] = (
@@ -551,8 +488,6 @@ async def tft_register(
     description="Remove a TFT account"
 )
 async def tft_unregister(interaction: discord.Interaction, riot_id: str):
-    global RANK_CACHE, LAST_20_STATS
-
     try:
         name, tag = riot_id.split("#")
     except ValueError:

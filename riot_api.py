@@ -2,9 +2,8 @@ import os
 import requests
 import aiohttp
 import asyncio
-import time
 from dotenv import load_dotenv
-from datetime import datetime, timezone
+from datetime import datetime
 from zoneinfo import ZoneInfo
 
 load_dotenv()
@@ -43,45 +42,6 @@ async def get_tft_rank_by_puuid_async(puuid):
 
 def get_tft_summoner_by_puuid(puuid):
     url = f"https://{PLATFORM}.api.riotgames.com/tft/summoner/v1/summoners/by-puuid/{puuid}"
-    resp = requests.get(url, headers=HEADERS)
-    resp.raise_for_status()
-    return resp.json()
-
-def get_rank_info_by_puuid(puuid):
-    try:
-        rank_data = get_tft_rank_by_puuid(puuid)
-        tft = next((q for q in rank_data if q["queueType"] == "RANKED_TFT"), None)
-        if not tft:
-            return "Unranked"
-        return f"{tft['tier']} {tft['rank']} - {tft['leaguePoints']} LP"
-    except Exception as e:
-        return f"Error fetching rank: {e}"
-
-
-def get_tft_rank(summoner_id):
-    url = f"https://{PLATFORM}.api.riotgames.com/tft/league/v1/entries/by-summoner/{summoner_id}"
-    response = requests.get(url, headers=HEADERS)
-    response.raise_for_status()
-    return response.json()
-
-# doesnt work atm
-def get_latest_ddragon_version():
-    url = "https://ddragon.leagueoflegends.com/api/versions.json"
-    resp = requests.get(url)
-    resp.raise_for_status()
-    versions = resp.json()
-    return versions[0]
-
-def get_last_tft_match_ids(puuid, count=20):
-    url = f"https://{REGION}.api.riotgames.com/tft/match/v1/matches/by-puuid/{puuid}/ids"
-    params = {"count": count}
-    resp = requests.get(url, headers=HEADERS, params=params)
-    resp.raise_for_status()
-    return resp.json()
-
-
-def get_tft_match(match_id):
-    url = f"https://{REGION}.api.riotgames.com/tft/match/v1/matches/{match_id}"
     resp = requests.get(url, headers=HEADERS)
     resp.raise_for_status()
     return resp.json()
@@ -183,26 +143,6 @@ async def get_last_20_stats_async(puuid):
         "avp": avp,
         "last_game_date": last_game_date
     }
-
-def get_challenger_league():
-    url = f"https://{PLATFORM}.api.riotgames.com/tft/league/v1/challenger"
-    response = requests.get(url, headers=HEADERS)
-    response.raise_for_status()
-    return response.json()
-
-
-def get_grandmaster_league():
-    url = f"https://{PLATFORM}.api.riotgames.com/tft/league/v1/grandmaster"
-    response = requests.get(url, headers=HEADERS)
-    response.raise_for_status()
-    return response.json()
-
-
-def get_master_league():
-    url = f"https://{PLATFORM}.api.riotgames.com/tft/league/v1/master"
-    response = requests.get(url, headers=HEADERS)
-    response.raise_for_status()
-    return response.json()
 
 async def get_tft_ladder():
     challenger_url = (

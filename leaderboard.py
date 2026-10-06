@@ -1,6 +1,6 @@
 import discord
 from database import get_lp_for_date
-from datetime import date, time, datetime, timedelta
+from datetime import time, datetime, timedelta
 from zoneinfo import ZoneInfo
 EST = ZoneInfo("America/New_York")
 
