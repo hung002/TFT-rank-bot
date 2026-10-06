@@ -1,8 +1,6 @@
 import discord
 from database import get_lp_for_date
-from datetime import time, datetime, timedelta
-from zoneinfo import ZoneInfo
-EST = ZoneInfo("America/New_York")
+from domain import snapshot_date
 
 class LeaderboardView(discord.ui.View):
     def __init__(self, players, last_20_stats, page=0, is_detailed=False):
@@ -21,16 +19,6 @@ class LeaderboardView(discord.ui.View):
     # EMBED BUILDER
     # -------------------------
 
-    def get_snapshot_date(self):
-        now = datetime.now(EST)
-
-        snapshot_date = now.date()
-
-        if now.time() < time(3, 15):
-            snapshot_date -= timedelta(days=1)
-
-        return snapshot_date.isoformat()
-        
     def build_embed(self):
         title = "📊 Detailed TFT Standings" if self.is_detailed else "📊 TFT Standings"
         embed = discord.Embed(title=title)
@@ -78,7 +66,7 @@ class LeaderboardView(discord.ui.View):
                 # -------------------------
                 # DAILY LP CHANGE (THIS IS WHAT WAS MISSING)
                 # -------------------------
-                start_lp = get_lp_for_date(p["puuid"], self.get_snapshot_date())
+                start_lp = get_lp_for_date(p["puuid"], snapshot_date())
 
                 lp_diff_text = ""
                 if start_lp is not None:
