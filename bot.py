@@ -15,9 +15,8 @@ from database import (
 )
 
 from riot_api import (
-    get_account,
-    get_tft_summoner_by_puuid,
-    get_tft_rank_by_puuid,
+    get_account_async,
+    get_tft_summoner_by_puuid_async,
     get_tft_rank_by_puuid_async,
     get_last_20_stats_async,
     get_tft_ladder
@@ -69,7 +68,7 @@ async def snapshot(players):
 
     for p in players:
         try:
-            rank_data = get_tft_rank_by_puuid(p["puuid"])
+            rank_data = await get_tft_rank_by_puuid_async(p["puuid"])
             entry = parse_ranked_entry(rank_data)
 
             if entry:
@@ -305,7 +304,7 @@ async def standings(interaction: discord.Interaction):
     if players:
         try:
             top = players[0]
-            summoner = get_tft_summoner_by_puuid(top["puuid"])
+            summoner = await get_tft_summoner_by_puuid_async(top["puuid"])
             icon_id = summoner.get("profileIconId", 0)
 
             ddragon_version = "13.23.1"
@@ -345,7 +344,7 @@ async def detailed_standings(interaction: discord.Interaction):
     if players:
         try:
             top = players[0]
-            summoner = get_tft_summoner_by_puuid(top["puuid"])
+            summoner = await get_tft_summoner_by_puuid_async(top["puuid"])
             icon_id = summoner.get("profileIconId", 0)
 
             ddragon_version = "13.23.1"
@@ -382,7 +381,7 @@ async def tft_register(
         return
 
     try:
-        account = get_account(name, tag)
+        account = await get_account_async(name, tag)
 
         if not account:
             await interaction.followup.send(

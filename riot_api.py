@@ -1,5 +1,4 @@
 import os
-import requests
 import aiohttp
 import asyncio
 from dotenv import load_dotenv
@@ -23,28 +22,20 @@ def get_session():
         SESSION = aiohttp.ClientSession()
     return SESSION
 
-def get_account(riot_name, tag):
+async def get_account_async(riot_name, tag):
     url = f"https://{REGION}.api.riotgames.com/riot/account/v1/accounts/by-riot-id/{riot_name}/{tag}"
-    response = requests.get(url, headers=HEADERS)
-    response.raise_for_status()
-    return response.json()
 
-def get_tft_rank_by_puuid(puuid):
-    url = f"https://{PLATFORM}.api.riotgames.com/tft/league/v1/by-puuid/{puuid}"
-    response = requests.get(url, headers=HEADERS)
-    response.raise_for_status()
-    return response.json()
+    return await fetch_json(url)
 
 async def get_tft_rank_by_puuid_async(puuid):
     url = f"https://{PLATFORM}.api.riotgames.com/tft/league/v1/by-puuid/{puuid}"
 
     return await fetch_json(url)
 
-def get_tft_summoner_by_puuid(puuid):
+async def get_tft_summoner_by_puuid_async(puuid):
     url = f"https://{PLATFORM}.api.riotgames.com/tft/summoner/v1/summoners/by-puuid/{puuid}"
-    resp = requests.get(url, headers=HEADERS)
-    resp.raise_for_status()
-    return resp.json()
+
+    return await fetch_json(url)
 
 # Async fetch JSON
 async def fetch_json(url):
