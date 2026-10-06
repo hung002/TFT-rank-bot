@@ -28,7 +28,6 @@ from riot_api import (
 DISCORD_TOKEN = os.getenv("DISCORD_TOKEN")
 
 intents = discord.Intents.default()
-intents.message_content = True
 
 bot = commands.Bot(command_prefix="!", intents=intents)
 tree = bot.tree
@@ -524,11 +523,6 @@ async def tft_unregister(interaction: discord.Interaction, riot_id: str):
         f"✅ Unregistered {name}#{tag}",
         ephemeral=True
     )
-
-
-@bot.command()
-async def debug_players(ctx):
-    await ctx.send(str(get_registered_players()))
 
 
 tree.add_command(tft_group)
