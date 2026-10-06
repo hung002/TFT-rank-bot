@@ -1,13 +1,15 @@
 import os
 import discord
 import asyncio
+from dotenv import load_dotenv
 from discord.ext import commands, tasks
 from discord import app_commands
 from zoneinfo import ZoneInfo
-from datetime import date, time, datetime, timedelta
+from datetime import time, datetime
 from leaderboard import LeaderboardView
+from domain import parse_ranked_entry, snapshot_date
 from database import (
-    get_lp_for_date,
+    init_db,
     save_snapshot,
     register_player,
     get_registered_players,
@@ -15,9 +17,9 @@ from database import (
 )
 
 from riot_api import (
-    get_account,
-    get_tft_summoner_by_puuid,
-    get_tft_rank_by_puuid,
+    RIOT_API_KEY,
+    get_account_async,
+    get_tft_summoner_by_puuid_async,
     get_tft_rank_by_puuid_async,
     get_last_20_stats_async,
     get_tft_ladder
@@ -26,12 +28,22 @@ from riot_api import (
 # BOT SETUP
 # ------------------------
 
+load_dotenv()
+
 DISCORD_TOKEN = os.getenv("DISCORD_TOKEN")
 
 intents = discord.Intents.default()
-intents.message_content = True
 
-bot = commands.Bot(command_prefix="!", intents=intents)
+class TFTBot(commands.Bot):
+    async def setup_hook(self):
+        init_db()
+        fetch_ids()
+        await tree.sync()
+
+        print("Commands synced")
+
+
+bot = TFTBot(command_prefix="!", intents=intents)
 tree = bot.tree
 
 EST = ZoneInfo("America/New_York")
@@ -65,61 +77,16 @@ def fetch_ids():
     ]
 
 
-def absolute_lp(tier, division, lp):
-    tier_order = [
-        "UNRANKED", "IRON", "BRONZE", "SILVER", "GOLD",
-        "PLATINUM", "EMERALD", "DIAMOND",
-        "MASTER", "GRANDMASTER", "CHALLENGER"
-    ]
-    division_order = {"I": 4, "II": 3, "III": 2, "IV": 1}
-
-    tier = tier.upper()
-
-    if tier in ["MASTER", "GRANDMASTER", "CHALLENGER"]:
-        return 3200 + lp
-
-    tier_index = tier_order.index(tier)
-    division_index = division_order.get(division.upper(), 0) if division else 0
-
-    return tier_index * 400 + (division_index - 1) * 100 + lp
-
-
-def get_snapshot_date():
-    now = datetime.now(EST)
-
-    snapshot_date = now.date()
-
-    if now.time() < time(3, 15):
-        snapshot_date -= timedelta(days=1)
-
-    return snapshot_date.isoformat()
-
-
 async def snapshot(players):
-    today = get_snapshot_date()
+    today = snapshot_date()
 
     for p in players:
         try:
-            rank_data = get_tft_rank_by_puuid(p["puuid"])
+            rank_data = await get_tft_rank_by_puuid_async(p["puuid"])
+            entry = parse_ranked_entry(rank_data)
 
-            tft = next(
-                (q for q in rank_data if q["queueType"] == "RANKED_TFT"),
-                None
-            )
-
-            if not tft:
-                # optional: still store unranked as 0
-                lp = 0
-            else:
-                tier = tft["tier"].upper()
-                division = (
-                    None
-                    if tier in ["MASTER", "GRANDMASTER", "CHALLENGER"]
-                    else tft.get("rank", "").upper()
-                )
-                lp = absolute_lp(tier, division, tft["leaguePoints"])
-
-            save_snapshot(p["puuid"], today, lp)
+            if entry:
+                save_snapshot(p["puuid"], today, entry.absolute_lp)
 
         except Exception as e:
             print(f"Snapshot error for {p['name']}: {e}")
@@ -129,63 +96,9 @@ async def snapshot(players):
 # ------------------------
 # BACKGROUND TASKS
 # ------------------------
-'''
-@tasks.loop(minutes=15)
-async def refresh_rank_cache():
-    """
-    Cheap refresh:
-    1 API call per player
-    """
 
-    print("🔄 Refreshing rank cache...")
-
-    for p in TRACKED:
-        try:
-            rank_data = await get_tft_rank_by_puuid_async(p["puuid"])
-
-            tft = next(
-                (
-                    q for q in rank_data
-                    if q["queueType"] == "RANKED_TFT"
-                ),
-                None
-            )
-
-            if not tft:
-                continue
-
-            tier = tft["tier"].upper()
-
-            division = (
-                None
-                if tier in ["MASTER", "GRANDMASTER", "CHALLENGER"]
-                else tft.get("rank", "").upper()
-            )
-
-            lp = tft["leaguePoints"]
-
-            abs_lp = absolute_lp(tier, division, lp)
-
-            RANK_CACHE[p["puuid"]] = {
-                "puuid": p["puuid"],
-                "riot_name": p["name"],
-                "riot_tag": p["tag"],
-
-                "tier": tier,
-                "division": division,
-                "lp": lp,
-                "absolute_lp": abs_lp,
-
-                "updated_at": datetime.now(EST)
-            }
-
-            print(f"Updated rank cache for {p['name']}")
-
-            await asyncio.sleep(1.5)
-
-        except Exception as e:
-            print(f"Rank cache error {p['name']}: {e}")
-'''
+async def log_loop_error(loop_name, error):
+    print(f"❌ Unhandled error in {loop_name} loop: {error}")
 
 @tasks.loop(minutes=15)
 async def refresh_rank_cache():
@@ -197,49 +110,37 @@ async def refresh_rank_cache():
         # --------------------------------
         # 1. Fetch individual player ranks
         # --------------------------------
+        started = list(TRACKED)
         new_cache = {}
+        skipped = 0
 
-        for p in TRACKED:
-            rank_data = await get_tft_rank_by_puuid_async(p["puuid"])
+        for p in started:
+            try:
+                rank_data = await get_tft_rank_by_puuid_async(p["puuid"])
+                entry = parse_ranked_entry(rank_data)
 
-            tft = next(
-                (
-                    q for q in rank_data
-                    if q["queueType"] == "RANKED_TFT"
-                ),
-                None
-            )
+                if not entry:
+                    continue
 
-            if not tft:
-                continue
+                new_cache[p["puuid"]] = {
+                    "puuid": p["puuid"],
+                    "riot_name": p["name"],
+                    "riot_tag": p["tag"],
 
-            tier = tft["tier"].upper()
+                    "tier": entry.tier,
+                    "division": entry.division,
+                    "lp": entry.lp,
+                    "absolute_lp": entry.absolute_lp,
 
-            division = (
-                None
-                if tier in ["MASTER", "GRANDMASTER", "CHALLENGER"]
-                else tft.get("rank", "").upper()
-            )
+                    # Filled in after ladder fetch
+                    "rank": None,
 
-            lp = tft["leaguePoints"]
-            abs_lp = absolute_lp(tier, division, lp)
+                    "updated_at": datetime.now(EST)
+                }
 
-            new_cache[p["puuid"]] = {
-                "puuid": p["puuid"],
-                "riot_name": p["name"],
-                "riot_tag": p["tag"],
-
-                "tier": tier,
-                "division": division,
-                "lp": lp,
-                "absolute_lp": abs_lp,
-
-                # Filled in after ladder fetch
-                "rank": None,
-                "tier_rank": None,
-
-                "updated_at": datetime.now(EST)
-            }
+            except Exception as e:
+                print(f"Rank cache error for {p['name']}: {e}")
+                skipped += 1
 
             await asyncio.sleep(1.5)
 
@@ -263,14 +164,12 @@ async def refresh_rank_cache():
 
             if puuid in new_cache:
                 new_cache[puuid]["rank"] = i
-                new_cache[puuid]["tier_rank"] = i
 
         for i, player in enumerate(grandmaster_entries, start=1):
             puuid = player["puuid"]
 
             if puuid in new_cache:
                 new_cache[puuid]["rank"] = challenger_count + i
-                new_cache[puuid]["tier_rank"] = i
 
         for i, player in enumerate(master_entries, start=1):
             puuid = player["puuid"]
@@ -281,23 +180,38 @@ async def refresh_rank_cache():
                     + grandmaster_count
                     + i
                 )
-                new_cache[puuid]["tier_rank"] = i
 
         # --------------------------------
-        # 4. Atomically replace cache
+        # 4. Reconcile and publish cache
         # --------------------------------
-        RANK_CACHE = new_cache
+        current = {p["puuid"] for p in TRACKED}
+        started_puuids = {p["puuid"] for p in started}
+
+        # Drop players who unregistered mid-refresh; carry over concurrent
+        # registrations (in RANK_CACHE but not in the list we iterated).
+        RANK_CACHE = {
+            **{puuid: entry for puuid, entry in new_cache.items()
+               if puuid in current},
+            **{puuid: RANK_CACHE[puuid]
+               for puuid in current - started_puuids
+               if puuid in RANK_CACHE}
+        }
 
         print(
             f"✅ Rank cache updated: "
-            f"{len(new_cache)} tracked players, "
+            f"{len(RANK_CACHE)} tracked players, "
             f"{challenger_count} Challenger, "
             f"{grandmaster_count} Grandmaster, "
             f"{len(master_entries)} Master"
+            f"{f', {skipped} skipped' if skipped else ''}"
         )
 
     except Exception as e:
         print(f"❌ Rank cache refresh failed: {e}")
+
+@refresh_rank_cache.error
+async def on_rank_cache_error(error):
+    await log_loop_error("refresh_rank_cache", error)
 
 @tasks.loop(minutes=1)
 async def refresh_match_stats():
@@ -311,9 +225,12 @@ async def refresh_match_stats():
     if not TRACKED:
         return
 
-    p = TRACKED[CURRENT_STATS_INDEX]
+    # keep the cursor in range when unregisters shrink TRACKED
+    CURRENT_STATS_INDEX %= len(TRACKED)
 
     try:
+        p = TRACKED[CURRENT_STATS_INDEX]
+
         LAST_20_STATS[p["puuid"]] = (
             await get_last_20_stats_async(p["puuid"])
         )
@@ -326,6 +243,10 @@ async def refresh_match_stats():
     CURRENT_STATS_INDEX = (
         CURRENT_STATS_INDEX + 1
     ) % len(TRACKED)
+
+@refresh_match_stats.error
+async def on_match_stats_error(error):
+    await log_loop_error("refresh_match_stats", error)
 
 
 @tasks.loop(time=time(hour=3, minute=15, tzinfo=EST))
@@ -346,8 +267,6 @@ async def daily_snapshot():
 async def on_ready():
     print(f"{bot.user} online")
 
-    fetch_ids()
-    
     if not refresh_rank_cache.is_running():
         refresh_rank_cache.start()
 
@@ -356,10 +275,6 @@ async def on_ready():
 
     if not daily_snapshot.is_running():
         daily_snapshot.start()
-
-    await tree.sync()
-
-    print("Commands synced")
 
 
 # ------------------------
@@ -397,7 +312,7 @@ async def standings(interaction: discord.Interaction):
     if players:
         try:
             top = players[0]
-            summoner = get_tft_summoner_by_puuid(top["puuid"])
+            summoner = await get_tft_summoner_by_puuid_async(top["puuid"])
             icon_id = summoner.get("profileIconId", 0)
 
             ddragon_version = "13.23.1"
@@ -437,7 +352,7 @@ async def detailed_standings(interaction: discord.Interaction):
     if players:
         try:
             top = players[0]
-            summoner = get_tft_summoner_by_puuid(top["puuid"])
+            summoner = await get_tft_summoner_by_puuid_async(top["puuid"])
             icon_id = summoner.get("profileIconId", 0)
 
             ddragon_version = "13.23.1"
@@ -474,7 +389,7 @@ async def tft_register(
         return
 
     try:
-        account = get_account(name, tag)
+        account = await get_account_async(name, tag)
 
         if not account:
             await interaction.followup.send(
@@ -496,36 +411,18 @@ async def tft_register(
         # Immediately cache newly registered player
         try:
             rank_data = await get_tft_rank_by_puuid_async(puuid)
+            entry = parse_ranked_entry(rank_data)
 
-            tft = next(
-                (
-                    q for q in rank_data
-                    if q["queueType"] == "RANKED_TFT"
-                ),
-                None
-            )
-
-            if tft:
-                tier = tft["tier"].upper()
-
-                division = (
-                    None
-                    if tier in ["MASTER", "GRANDMASTER", "CHALLENGER"]
-                    else tft.get("rank", "").upper()
-                )
-
-                lp = tft["leaguePoints"]
-
+            if entry:
                 RANK_CACHE[puuid] = {
                     "puuid": puuid,
                     "riot_name": name,
                     "riot_tag": tag,
-                    "tier": tier,
-                    "division": division,
-                    "lp": lp,
-                    "absolute_lp": absolute_lp(tier, division, lp),
+                    "tier": entry.tier,
+                    "division": entry.division,
+                    "lp": entry.lp,
+                    "absolute_lp": entry.absolute_lp,
                     "rank": None,
-                    "tier_rank": None,
                     "updated_at": datetime.now(EST)
                 }
             LAST_20_STATS[puuid] = (
@@ -551,8 +448,6 @@ async def tft_register(
     description="Remove a TFT account"
 )
 async def tft_unregister(interaction: discord.Interaction, riot_id: str):
-    global RANK_CACHE, LAST_20_STATS
-
     try:
         name, tag = riot_id.split("#")
     except ValueError:
@@ -591,15 +486,21 @@ async def tft_unregister(interaction: discord.Interaction, riot_id: str):
     )
 
 
-@bot.command()
-async def debug_players(ctx):
-    await ctx.send(str(get_registered_players()))
-
-
 tree.add_command(tft_group)
 
 # ------------------------
 # RUN
 # ------------------------
 
-bot.run(DISCORD_TOKEN)
+def main():
+    if not DISCORD_TOKEN:
+        raise SystemExit("DISCORD_TOKEN is not set (checked environment and .env)")
+
+    if not RIOT_API_KEY:
+        raise SystemExit("RIOT_API_KEY is not set (checked environment and .env)")
+
+    bot.run(DISCORD_TOKEN)
+
+
+if __name__ == "__main__":
+    main()
